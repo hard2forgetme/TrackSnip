@@ -29,7 +29,7 @@ export function classifyCutResult(cutResult) {
   }
 
   if (cutResult.success) {
-    if (!cutResult.dataUrl) {
+    if (!cutResult.blobUrl) {
       return {
         shouldAdvance: false,
         shouldSave: false,

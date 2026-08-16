@@ -5,7 +5,7 @@
  */
 
 (function () {
-  const contentScriptVersion = '1.3.0';
+  const contentScriptVersion = '1.3.1';
   const existingController = window.__TRACKSNIP_CONTENT_CONTROLLER__;
   if (existingController?.version === contentScriptVersion) {
     existingController.activate();
@@ -32,44 +32,20 @@
     return text.replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * Injects bridge to intercept navigator.mediaSession.metadata in page world
-   */
-  function injectMediaSessionBridge() {
+  function safeResolveUrl(value) {
     try {
-      const script = document.createElement('script');
-      script.textContent = `
-        (function() {
-          if (window.__TR_BRIDGE_INJECTED__) return;
-          window.__TR_BRIDGE_INJECTED__ = true;
+      return value ? new URL(value, window.location.origin).href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
 
-          if ('mediaSession' in navigator) {
-            let currentMeta = navigator.mediaSession.metadata;
-            try {
-              Object.defineProperty(navigator.mediaSession, 'metadata', {
-                get: function() { return currentMeta; },
-                set: function(val) {
-                  currentMeta = val;
-                  if (val && val.title) {
-                    window.dispatchEvent(new CustomEvent('TR_MEDIASESSION_UPDATE', {
-                      detail: {
-                        title: val.title || '',
-                        artist: val.artist || '',
-                        album: val.album || ''
-                      }
-                    }));
-                  }
-                },
-                configurable: true,
-                enumerable: true
-              });
-            } catch(e) {}
-          }
-        })();
-      `;
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
-    } catch (e) {}
+  function getYouTubeVideoId() {
+    try {
+      return new URL(window.location.href).searchParams.get('v') || '';
+    } catch (_error) {
+      return '';
+    }
   }
 
   function handleMediaSessionUpdate(e) {
@@ -136,7 +112,7 @@
             artist: artistLink ? cleanText(artistLink.textContent) : '',
             source: 'suno-playbar',
             trackId: trackIdMatch ? trackIdMatch[1] : '',
-            identityUrl: href ? new URL(href, window.location.origin).href : ''
+            identityUrl: safeResolveUrl(href)
           };
         }
       }
@@ -151,7 +127,8 @@
         return {
           title: cleanText(ytmTitle.textContent),
           artist: ytmArtist ? cleanText(ytmArtist.textContent) : '',
-          source: 'youtube-music'
+          source: 'youtube-music',
+          trackId: getYouTubeVideoId()
         };
       }
 
@@ -162,7 +139,8 @@
         return {
           title: cleanText(ytTitle.textContent),
           artist: ytChannel ? cleanText(ytChannel.textContent) : '',
-          source: 'youtube'
+          source: 'youtube',
+          trackId: getYouTubeVideoId()
         };
       }
     }
@@ -400,7 +378,6 @@
   function activate() {
     if (isActive) return;
     isActive = true;
-    injectMediaSessionBridge();
 
     window.addEventListener('TR_MEDIASESSION_UPDATE', handleMediaSessionUpdate);
     window.addEventListener('popstate', handlePopState);
@@ -451,6 +428,12 @@
 
   // Message listener from popup/background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const backgroundUrl = chrome.runtime.getURL('background.js');
+    const isBackgroundSender = sender?.id === chrome.runtime.id
+      && !sender.tab
+      && (!sender.url || sender.url === backgroundUrl);
+    if (!isBackgroundSender) return false;
+
     if (message.type === 'START_TRACK_METADATA') {
       activate();
       sendResponse({ success: true, active: true });

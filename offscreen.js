@@ -12,11 +12,11 @@ let audioContext = null;
 let mediaStream = null;
 let mediaSource = null;
 let scriptProcessor = null;
+let processorSink = null;
 let analyserNode = null;
 
 // Audio buffer for the current active track
-let leftChunks = [];
-let rightChunks = [];
+let pcmChunks = [];
 let totalSamplesRecorded = 0;
 let trackStartTime = 0;
 let isRecording = false;
@@ -38,9 +38,27 @@ let audibleSamplesInCurrentTrack = 0;
 
 // Level metering
 let currentRMS = 0;
+const activeBlobUrls = new Set();
+const BACKGROUND_URL = chrome.runtime.getURL('background.js');
+
+function isBackgroundSender(sender) {
+  return sender?.id === chrome.runtime.id
+    && !sender.tab
+    && (!sender.url || sender.url === BACKGROUND_URL);
+}
+
+function revokeAudioUrl(blobUrl) {
+  if (!activeBlobUrls.has(blobUrl)) return;
+  URL.revokeObjectURL(blobUrl);
+  activeBlobUrls.delete(blobUrl);
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== 'offscreen') return false;
+  if (!isBackgroundSender(sender)) {
+    sendResponse({ success: false, error: 'Unauthorized message sender' });
+    return false;
+  }
 
   switch (message.type) {
     case 'PING':
@@ -82,6 +100,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (typeof message.silenceDurationMs === 'number') {
         silenceDurationMs = message.silenceDurationMs;
       }
+      sendResponse({ success: true });
+      return false;
+
+    case 'REVOKE_AUDIO_URL':
+      revokeAudioUrl(message.blobUrl);
       sendResponse({ success: true });
       return false;
 
@@ -154,8 +177,7 @@ async function handleStartCapture(streamId, options = {}) {
     scriptProcessor = audioContext.createScriptProcessor(bufferSize, 2, 2);
 
     // Reset buffer
-    leftChunks = [];
-    rightChunks = [];
+    pcmChunks = [];
     totalSamplesRecorded = 0;
     trackStartTime = Date.now();
     silentSince = null;
@@ -168,7 +190,10 @@ async function handleStartCapture(streamId, options = {}) {
     scriptProcessor.onaudioprocess = onAudioProcess;
 
     mediaSource.connect(scriptProcessor);
-    scriptProcessor.connect(audioContext.destination);
+    processorSink = audioContext.createGain();
+    processorSink.gain.value = 0;
+    scriptProcessor.connect(processorSink);
+    processorSink.connect(audioContext.destination);
 
     return { success: true, sampleRate: audioContext.sampleRate };
   } catch (error) {
@@ -187,9 +212,7 @@ function onAudioProcess(e) {
   const inputLeft = e.inputBuffer.getChannelData(0);
   const inputRight = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : inputLeft;
 
-  // Clone Float32 buffers
-  leftChunks.push(new Float32Array(inputLeft));
-  rightChunks.push(new Float32Array(inputRight));
+  pcmChunks.push(WavEncoder.floatChannelsToInterleavedPcm16(inputLeft, inputRight));
   totalSamplesRecorded += inputLeft.length;
 
   const bufferedDurationSec = audioContext
@@ -271,7 +294,7 @@ async function handleCutTrack(reason = 'manual') {
   }
 
   const sampleRate = audioContext.sampleRate;
-  const chunkCount = leftChunks.length;
+  const chunkCount = pcmChunks.length;
 
   if (chunkCount === 0 || totalSamplesRecorded === 0) {
     return { success: false, error: 'No audio data captured' };
@@ -279,8 +302,7 @@ async function handleCutTrack(reason = 'manual') {
 
   // If buffer has NO audible content and was not forced by manual user click, discard silence
   if (!hasAudibleContentInCurrentTrack && reason !== 'manual') {
-    leftChunks = [];
-    rightChunks = [];
+    pcmChunks = [];
     totalSamplesRecorded = 0;
     hasAudibleContentInCurrentTrack = false;
     audibleSamplesInCurrentTrack = 0;
@@ -307,23 +329,9 @@ async function handleCutTrack(reason = 'manual') {
     return { success: false, error: 'Track duration too short (<2s)', durationSec };
   }
 
-  // Combine chunks into contiguous Float32Arrays up to finalSamples
-  const combinedLeft = new Float32Array(finalSamples);
-  const combinedRight = new Float32Array(finalSamples);
-
-  let offset = 0;
-  for (let i = 0; i < chunkCount && offset < finalSamples; i++) {
-    const chunkL = leftChunks[i];
-    const chunkR = rightChunks[i];
-    const copyLen = Math.min(chunkL.length, finalSamples - offset);
-    combinedLeft.set(chunkL.subarray(0, copyLen), offset);
-    combinedRight.set(chunkR.subarray(0, copyLen), offset);
-    offset += copyLen;
-  }
-
   // Reset buffers for the next track
-  leftChunks = [];
-  rightChunks = [];
+  const finishedChunks = pcmChunks;
+  pcmChunks = [];
   totalSamplesRecorded = 0;
   hasAudibleContentInCurrentTrack = false;
   audibleSamplesInCurrentTrack = 0;
@@ -331,13 +339,19 @@ async function handleCutTrack(reason = 'manual') {
   silentSince = null;
   durationLimitTriggered = false;
 
-  // Encode to WAV Blob
-  const wavBlob = WavEncoder.encode([combinedLeft, combinedRight], sampleRate);
-  const dataUrl = await WavEncoder.blobToDataURL(wavBlob);
+  const wavBlob = WavEncoder.encodePcm16Chunks(
+    finishedChunks,
+    sampleRate,
+    2,
+    finalSamples
+  );
+  const blobUrl = URL.createObjectURL(wavBlob);
+  activeBlobUrls.add(blobUrl);
+  setTimeout(() => revokeAudioUrl(blobUrl), 15 * 60 * 1000);
 
   return {
     success: true,
-    dataUrl,
+    blobUrl,
     durationSec,
     sampleRate,
     sizeBytes: wavBlob.size,
@@ -369,8 +383,7 @@ async function handleStopCapture() {
   isRecording = false;
   hasAudibleContentInCurrentTrack = false;
   audibleSamplesInCurrentTrack = 0;
-  leftChunks = [];
-  rightChunks = [];
+  pcmChunks = [];
   totalSamplesRecorded = 0;
   durationLimitTriggered = false;
 
@@ -378,6 +391,11 @@ async function handleStopCapture() {
     scriptProcessor.disconnect();
     scriptProcessor.onaudioprocess = null;
     scriptProcessor = null;
+  }
+
+  if (processorSink) {
+    processorSink.disconnect();
+    processorSink = null;
   }
 
   if (mediaSource) {
@@ -400,8 +418,7 @@ async function handleStopCapture() {
     audioContext = null;
   }
 
-  leftChunks = [];
-  rightChunks = [];
+  pcmChunks = [];
   totalSamplesRecorded = 0;
   silentSince = null;
   continuousSilenceStart = null;

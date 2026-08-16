@@ -72,6 +72,29 @@ test('WavEncoder encodes valid RIFF/WAVE header and correct byte length', () => 
   assert.strictEqual(blob.size, expectedSize, `Size should be ${expectedSize} bytes`);
 });
 
+await asyncTest('WavEncoder packages PCM16 chunks without a base64 conversion', async () => {
+  assert.strictEqual(
+    typeof WavEncoder.encodePcm16Chunks,
+    'function',
+    'Chunked PCM encoder must be available'
+  );
+
+  const chunks = [
+    new Int16Array([0, 0, 16384, -16384]),
+    new Int16Array([32767, -32768])
+  ];
+  const blob = WavEncoder.encodePcm16Chunks(chunks, 48000, 2, 3);
+  assert.strictEqual(blob.type, 'audio/wav');
+  assert.strictEqual(blob.size, 44 + (3 * 2 * 2));
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  assert.strictEqual(String.fromCharCode(...bytes.slice(0, 4)), 'RIFF');
+  assert.strictEqual(String.fromCharCode(...bytes.slice(8, 12)), 'WAVE');
+  const view = new DataView(bytes.buffer);
+  assert.strictEqual(view.getInt16(48, true), 16384);
+  assert.strictEqual(view.getInt16(50, true), -16384);
+});
+
 // ==========================================
 // 2. AI Namer & Prompt Distillation Tests
 // ==========================================
@@ -408,7 +431,7 @@ await asyncTest('cut-result classification advances only successful or intention
   assert.deepStrictEqual(
     lifecycle.classifyCutResult({
       success: true,
-      dataUrl: 'data:audio/wav;base64,AAAA',
+      blobUrl: 'blob:chrome-extension://example/audio',
       durationSec: 4.2
     }),
     {
@@ -774,6 +797,141 @@ test('CI runs once for main updates instead of repeating on release tag pushes',
     workflow.includes('push:\n    branches:\n      - main'),
     'Push checks must be scoped to the main branch'
   );
+});
+
+// ==========================================
+// 14. Imported Security Review Regressions
+// ==========================================
+console.log('\n--- 14. Imported Security Review Regressions ---');
+
+await asyncTest('input policy bounds configuration and rejects unsafe path segments', async () => {
+  const policyUrl = new URL('../input_policy.js', import.meta.url);
+  assert.ok(fs.existsSync(policyUrl), 'input_policy.js must define shared input boundaries');
+
+  const policy = await import(policyUrl);
+  assert.strictEqual(policy.sanitizePathSegment('..'), 'Untitled_Track');
+  assert.strictEqual(policy.sanitizePathSegment('CON'), '_CON');
+  assert.strictEqual(policy.sanitizePathSegment('mix?.wav'), 'mix_.wav');
+  assert.strictEqual(policy.normalizeSilenceThreshold(0.015), 0.015);
+  assert.throws(() => policy.normalizeSilenceThreshold(0), /silence threshold/i);
+  assert.throws(() => policy.normalizeSilenceThreshold(2), /silence threshold/i);
+  assert.strictEqual(policy.normalizeModelName('qwen2.5:1.5b'), 'qwen2.5:1.5b');
+  assert.throws(() => policy.normalizeModelName('<img>'), /model name/i);
+  assert.strictEqual(policy.getUrlOrigin('https://music.example.test/play?id=1'), 'https://music.example.test');
+  const popupUrl = 'chrome-extension://abcdefghijklmnop/popup.html';
+  assert.strictEqual(
+    policy.isTrustedExtensionPageSender(
+      {
+        id: 'abcdefghijklmnop',
+        url: popupUrl,
+        tab: { id: 17 }
+      },
+      'abcdefghijklmnop',
+      popupUrl
+    ),
+    true,
+    'An exact packaged extension page remains trusted when Chrome exposes it in a tab'
+  );
+  assert.strictEqual(
+    policy.isTrustedExtensionPageSender(
+      {
+        id: 'abcdefghijklmnop',
+        url: 'chrome-extension://abcdefghijklmnop/offscreen.html'
+      },
+      'abcdefghijklmnop',
+      popupUrl
+    ),
+    false
+  );
+});
+
+test('offscreen recorder returns Blob URLs and uses an explicitly silent processor sink', () => {
+  const source = fs.readFileSync(new URL('../offscreen.js', import.meta.url), 'utf8');
+  const backgroundSource = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('URL.createObjectURL(wavBlob)'));
+  assert.ok(
+    backgroundSource.includes("reasons: ['USER_MEDIA', 'BLOBS']"),
+    'Offscreen creation must declare both media-stream and Blob usage'
+  );
+  assert.ok(source.includes("case 'REVOKE_AUDIO_URL':"));
+  assert.ok(source.includes('processorSink.gain.value = 0'));
+  assert.ok(!source.includes('blobToDataURL'));
+  assert.ok(!source.includes('scriptProcessor.connect(audioContext.destination)'));
+});
+
+test('background downloads Blob URLs and gates privileged messages by sender', () => {
+  const source = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  const popupSource = fs.readFileSync(new URL('../popup.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('cutResult.blobUrl'));
+  assert.ok(source.includes('waitForDownloadCompletion'));
+  assert.ok(source.includes('revokeOffscreenAudioUrl'));
+  assert.ok(
+    source.includes(
+      'if (cutResult.durationSec < 2.0) {\n    await revokeOffscreenAudioUrl(cutResult.blobUrl);'
+    ),
+    'Rejected short cuts must revoke their offscreen Blob URL immediately'
+  );
+  const stopFunction = source.slice(
+    source.indexOf('async function stopRecording()'),
+    source.indexOf('function isPopupSender(sender)')
+  );
+  assert.ok(
+    stopFunction.indexOf('await closeOffscreenDocument()')
+      > stopFunction.indexOf('} finally {'),
+    'Offscreen cleanup must run from stopRecording finally'
+  );
+  assert.ok(source.includes('isPopupSender(sender)'));
+  assert.ok(source.includes('Unauthorized message sender'));
+  assert.ok(
+    source.includes("case 'GET_AUDIO_STATE':")
+      && source.includes("target: 'offscreen',\n        type: 'GET_AUDIO_STATE'"),
+    'The background must proxy popup audio-state reads to the offscreen document'
+  );
+  assert.ok(
+    !popupSource.includes("target: 'offscreen',\n          type: 'GET_AUDIO_STATE'"),
+    'The popup must not bypass the offscreen sender boundary'
+  );
+  assert.ok(source.includes("chrome.tabs.onUpdated.addListener"));
+  assert.ok(source.includes('recordingTabOrigin'));
+});
+
+test('save location stays compact and never opens repeated per-track prompts', () => {
+  const backgroundSource = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  const popupSource = fs.readFileSync(new URL('../popup.js', import.meta.url), 'utf8');
+  const popupHtml = fs.readFileSync(new URL('../popup.html', import.meta.url), 'utf8');
+  const popupCss = fs.readFileSync(new URL('../popup.css', import.meta.url), 'utf8');
+
+  assert.ok(backgroundSource.includes('saveAs: false'));
+  assert.ok(!backgroundSource.includes('promptForSaveLocation'));
+  assert.ok(!popupHtml.includes('id="saveAsToggle"'));
+  assert.ok(!popupHtml.includes('Ask where to save each track'));
+  assert.ok(!popupSource.includes('saveAsToggle'));
+  assert.ok(!popupCss.includes('.save-prompt-row'));
+  assert.match(
+    popupCss,
+    /\.app-container\s*\{[^}]*gap:\s*8px;/,
+    'Popup sections must stay compact enough to keep the primary action visible'
+  );
+});
+
+test('popup builds untrusted history and model content without dynamic HTML', () => {
+  const source = fs.readFileSync(new URL('../popup.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('historyList.replaceChildren'));
+  assert.ok(source.includes('aiModelSelect.replaceChildren'));
+  assert.ok(!source.includes('.innerHTML'));
+  assert.ok(!source.includes('historyList.innerHTML = tracks.map'));
+  assert.ok(!source.includes('const optionsHtml = res.models.map'));
+  assert.ok(!source.includes('querySelector(`option[value="${status.aiModel}"]`)'));
+});
+
+test('metadata bridge runs in the page MAIN world and URL parsing is guarded', () => {
+  const backgroundSource = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  const contentSource = fs.readFileSync(new URL('../content_script.js', import.meta.url), 'utf8');
+  assert.ok(backgroundSource.includes("world: 'MAIN'"));
+  assert.ok(backgroundSource.includes('installMediaSessionBridge'));
+  assert.ok(!contentSource.includes("script.textContent = `"));
+  assert.ok(contentSource.includes('safeResolveUrl'));
+  assert.ok(contentSource.includes('getYouTubeVideoId'));
 });
 
 // Summary

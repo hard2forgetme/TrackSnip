@@ -38,17 +38,17 @@
       </div>
     </header>
 
-    <!-- Destination Folder Settings -->
+    <!-- Save Location Settings -->
     <section class="card folder-card">
       <div class="card-header">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
         </svg>
-        <span>Save Destination Folder</span>
+        <span>Save Location</span>
       </div>
       <div class="folder-input-group" title="Subfolder inside your browser Downloads folder">
         <span class="folder-prefix">Downloads /</span>
-        <input type="text" id="folderInput" placeholder="Web_Recordings" spellcheck="false" title="Destination folder name">
+        <input type="text" id="folderInput" maxlength="120" placeholder="Web_Recordings" spellcheck="false" title="Destination folder name">
       </div>
       <div class="folder-hint">
         <span>Files saved to: <code>Downloads/&lt;Folder&gt;/&lt;Track_Name&gt;.wav</code></span>
@@ -148,7 +148,7 @@
 
           <!-- Custom Model Pull Input -->
           <div class="custom-pull-group">
-            <input type="text" id="customModelInput" placeholder="Custom model (e.g. gemma2:2b)">
+            <input type="text" id="customModelInput" maxlength="200" placeholder="Custom model (e.g. gemma2:2b)">
             <button id="customPullBtn" class="btn btn-xs btn-secondary">Pull</button>
           </div>
 
@@ -167,7 +167,7 @@
         <!-- Interactive Live Prompt Test -->
         <div class="ai-tester-drawer">
           <div class="tester-input-group" title="Type any prompt or raw title to test AI title generation">
-            <input type="text" id="aiTestInput" placeholder="Test prompt (e.g. 80s synthwave about neon lights)">
+            <input type="text" id="aiTestInput" maxlength="2000" placeholder="Test prompt (e.g. 80s synthwave about neon lights)">
             <button id="aiTestBtn" class="btn btn-xs btn-ai" title="Generate title preview">Test Name</button>
           </div>
           <div id="aiTestResult" class="ai-test-result" style="display: none;">

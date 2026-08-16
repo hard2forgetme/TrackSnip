@@ -19,6 +19,8 @@ record.
   Web Audio pipeline.
 - Playback continues through the normal speaker/headphone route.
 - Uncompressed 16-bit PCM WAV output with standard RIFF/WAVE headers.
+- PCM16 chunk buffering and Blob URL download handoff avoid oversized runtime
+  messages for long tracks.
 - Metadata-aware track splitting, including stable player identifiers where
   available.
 - RMS-based silence splitting and approximately five-second inactivity
@@ -60,10 +62,11 @@ record.
    detected.
 
 Automatic transitions intentionally discard captures shorter than two seconds.
-The current implementation accumulates one track in memory before encoding.
-To prevent unbounded memory growth, uninterrupted recordings are automatically
-segmented every ten minutes. Automatic silence stopping is approximate and
-depends on the audio signal and the platform's player behavior.
+The current implementation buffers one track as interleaved PCM16 chunks before
+creating its WAV Blob. To prevent unbounded memory growth, uninterrupted
+recordings are automatically segmented every ten minutes. Automatic silence
+stopping is approximate and depends on the audio signal and the platform's
+player behavior.
 
 ## Permissions and privacy
 
@@ -73,6 +76,8 @@ Metadata detection is injected only when recording starts, and its observers
 and polling are stopped when recording ends. During recording it can inspect
 that tab's title, media metadata, selected player DOM text, and current URL.
 Audio is processed locally and saved through Chrome's download manager.
+Recording stops automatically if the selected tab navigates to a different
+website origin.
 
 Chrome may still display its broad "read and change" warning because TrackSnip
 requires the `tabCapture` permission to record the tab the user explicitly
@@ -100,7 +105,7 @@ checks reachable Git history, commit and tag identities, timestamps, local
 paths, secret patterns, and live service identifiers. `npm run check` runs that
 audit after validating the Manifest V3 JSON, JavaScript syntax, referenced
 extension assets, and required release documentation. `npm run package` creates
-`release/tracksnip-v1.3.0.zip`, excluding Git metadata, tests, CI, and release
+`release/tracksnip-v1.3.1.zip`, excluding Git metadata, tests, CI, and release
 tooling.
 
 ## Release steps
@@ -133,6 +138,9 @@ TrackSnip/
 ├── background.js            # MV3 service worker and download routing
 ├── offscreen.html/.js       # Tab capture and WAV pipeline
 ├── ai_namer.js              # AI connector and offline naming
+├── input_policy.js           # Shared configuration and sender validation
+├── local_endpoint_policy.js  # Local AI endpoint restrictions
+├── recording_limits.js       # Bounded recording duration policy
 ├── track_metadata_logic.js  # Metadata normalization
 ├── track_transition_queue.js # Rapid-transition serialization
 ├── runtime_state_logic.js   # Runtime state reconciliation

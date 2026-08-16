@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.3.1 - 2026-08-16
 
 - Removed unreferenced legacy logo source files from the public repository.
 - Tightened public documentation, security reporting, and CI trigger behavior.
+- Replaced base64 WAV messages with offscreen PCM16 buffering and Blob URL
+  downloads, with explicit `USER_MEDIA` and `BLOBS` lifecycle reasons.
+- Added sender validation for popup, offscreen, and recording-tab messages.
+- Removed dynamic HTML rendering for track history and local model names.
+- Added configuration bounds, reserved filename handling, and cross-origin
+  recording shutdown.
+- Moved the MediaSession bridge to Chrome's page `MAIN` world while preserving
+  the browser's native metadata setter.
 
 ## 1.3.0 - 2026-08-16
 

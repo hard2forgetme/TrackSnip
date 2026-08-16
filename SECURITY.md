@@ -23,6 +23,10 @@ download handling, local AI endpoint handling, model downloads, and extension
 message validation are in scope. Reports about third-party web platforms or
 Ollama/LM Studio themselves should be reported to those projects as well.
 
+Privileged recording and configuration messages are accepted only from the
+TrackSnip popup. Track events are accepted only from the active recording tab,
+and audio-control events are accepted only from the offscreen recorder.
+
 ## Safe testing
 
 Use synthetic audio and a test profile. Do not include private page content,

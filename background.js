@@ -8,17 +8,28 @@ import {
   DEFAULT_LOCAL_AI_ENDPOINT,
   normalizeLocalAiEndpoint
 } from './local_endpoint_policy.js';
+import {
+  getUrlOrigin,
+  normalizeAiProvider,
+  normalizeModelName,
+  normalizePrompt,
+  normalizeSilenceThreshold,
+  isTrustedExtensionPageSender,
+  sanitizePathSegment
+} from './input_policy.js';
 import TrackTransitionQueue from './track_transition_queue.js';
 import { classifyCutResult, reconcileRecordingState } from './runtime_state_logic.js';
 import './track_metadata_logic.js';
 
 const OFFSCREEN_PATH = 'offscreen.html';
+const POPUP_PATH = 'popup.html';
 const metadataLogic = globalThis.TrackSnipMetadata;
 
 // In-memory state
 let state = {
   isRecording: false,
   recordingTabId: null,
+  recordingTabOrigin: '',
   recordingTabTitle: '',
   folderName: 'Web_Recordings',
   autoCutOnTrackChange: true,
@@ -135,6 +146,7 @@ async function restoreState() {
     const saved = await chrome.storage.local.get([
       'isRecording',
       'recordingTabId',
+      'recordingTabOrigin',
       'recordingTabTitle',
       'folderName',
       'autoCutOnTrackChange',
@@ -151,13 +163,29 @@ async function restoreState() {
       'recordedTracks'
     ]);
 
-    if (saved.folderName) state.folderName = saved.folderName;
+    if (saved.folderName) {
+      state.folderName = sanitizePathSegment(saved.folderName, {
+        fallback: 'Web_Recordings'
+      });
+    }
     if (saved.autoCutOnTrackChange !== undefined) state.autoCutOnTrackChange = saved.autoCutOnTrackChange;
     if (saved.autoCutOnSilence !== undefined) state.autoCutOnSilence = saved.autoCutOnSilence;
     if (saved.autoStopOnSilence !== undefined) state.autoStopOnSilence = saved.autoStopOnSilence;
-    if (saved.silenceThreshold !== undefined) state.silenceThreshold = saved.silenceThreshold;
+    if (saved.silenceThreshold !== undefined) {
+      try {
+        state.silenceThreshold = normalizeSilenceThreshold(saved.silenceThreshold);
+      } catch (_error) {
+        state.silenceThreshold = 0.015;
+      }
+    }
     if (saved.aiNamingEnabled !== undefined) state.aiNamingEnabled = saved.aiNamingEnabled;
-    if (saved.aiProvider) state.aiProvider = saved.aiProvider;
+    if (saved.aiProvider) {
+      try {
+        state.aiProvider = normalizeAiProvider(saved.aiProvider);
+      } catch (_error) {
+        state.aiProvider = 'ollama';
+      }
+    }
     if (saved.aiEndpoint) {
       try {
         state.aiEndpoint = normalizeLocalAiEndpoint(saved.aiEndpoint);
@@ -165,7 +193,13 @@ async function restoreState() {
         state.aiEndpoint = DEFAULT_LOCAL_AI_ENDPOINT;
       }
     }
-    if (saved.aiModel) state.aiModel = saved.aiModel;
+    if (saved.aiModel) {
+      try {
+        state.aiModel = normalizeModelName(saved.aiModel);
+      } catch (_error) {
+        state.aiModel = 'qwen2.5:1.5b';
+      }
+    }
     if (saved.trackNameCounts) state.trackNameCounts = saved.trackNameCounts;
     if (saved.recordedTracks) state.recordedTracks = saved.recordedTracks;
 
@@ -174,6 +208,9 @@ async function restoreState() {
       : { exists: false, isRecording: false };
     const reconciledRecordingState = reconcileRecordingState(saved, offscreenState);
     Object.assign(state, reconciledRecordingState);
+    state.recordingTabOrigin = reconciledRecordingState.isRecording
+      ? getUrlOrigin(saved.recordingTabOrigin) || getUrlOrigin(saved.currentTrack?.url)
+      : '';
 
     if (saved.isRecording && !reconciledRecordingState.isRecording) {
       await syncStorage();
@@ -211,6 +248,7 @@ async function syncStorage() {
   await chrome.storage.local.set({
     isRecording: state.isRecording,
     recordingTabId: state.recordingTabId,
+    recordingTabOrigin: state.recordingTabOrigin,
     recordingTabTitle: state.recordingTabTitle,
     folderName: state.folderName,
     autoCutOnTrackChange: state.autoCutOnTrackChange,
@@ -240,8 +278,8 @@ async function setupOffscreenDocument() {
   if (existingContexts.length === 0) {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
-      reasons: ['USER_MEDIA'],
-      justification: 'Capture and process tab audio for track recording'
+      reasons: ['USER_MEDIA', 'BLOBS'],
+      justification: 'Capture tab audio and encode it into downloadable WAV Blob objects'
     });
   }
 
@@ -278,13 +316,46 @@ async function closeOffscreenDocument() {
  * Sanitizes filename and folder names for all OS filesystems
  */
 function sanitizeFilename(name) {
-  if (!name) return 'Untitled_Track';
-  let clean = name.replace(/[\\/:*?"<>|]/g, '_').trim();
-  clean = clean.replace(/[\x00-\x1f\x80-\x9f]/g, '');
-  if (clean.length > 120) {
-    clean = clean.substring(0, 120).trim();
+  return sanitizePathSegment(name);
+}
+
+function installMediaSessionBridge() {
+  const bridgeVersion = '1.3.1';
+  if (window.__TRACKSNIP_MEDIA_BRIDGE_VERSION__ === bridgeVersion) return;
+  window.__TRACKSNIP_MEDIA_BRIDGE_VERSION__ = bridgeVersion;
+
+  if (!('mediaSession' in navigator)) return;
+
+  let prototype = navigator.mediaSession;
+  let descriptor = null;
+  while (prototype && !descriptor) {
+    descriptor = Object.getOwnPropertyDescriptor(prototype, 'metadata');
+    prototype = Object.getPrototypeOf(prototype);
   }
-  return clean || 'Untitled_Track';
+  if (!descriptor?.get || !descriptor?.set) return;
+
+  try {
+    Object.defineProperty(navigator.mediaSession, 'metadata', {
+      get() {
+        return descriptor.get.call(navigator.mediaSession);
+      },
+      set(value) {
+        descriptor.set.call(navigator.mediaSession, value);
+        if (!value?.title) return;
+        window.dispatchEvent(new CustomEvent('TR_MEDIASESSION_UPDATE', {
+          detail: {
+            title: value.title || '',
+            artist: value.artist || '',
+            album: value.album || ''
+          }
+        }));
+      },
+      configurable: true,
+      enumerable: true
+    });
+  } catch (_error) {
+    // Some players define a non-configurable metadata property.
+  }
 }
 
 /**
@@ -321,9 +392,15 @@ async function startRecording(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
     state.recordingTabId = tabId;
+    state.recordingTabOrigin = getUrlOrigin(tab.url);
     state.recordingTabTitle = tab.title || 'Web Tab';
 
     // activeTab grants temporary access after the user clicks the extension action.
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: installMediaSessionBridge
+    });
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['track_metadata_logic.js', 'content_script.js']
@@ -386,16 +463,65 @@ async function startRecording(tabId) {
     }
     state.isRecording = false;
     state.recordingTabId = null;
+    state.recordingTabOrigin = '';
     await syncStorage();
     throw error;
   }
+}
+
+async function revokeOffscreenAudioUrl(blobUrl) {
+  if (!blobUrl) return;
+  await chrome.runtime.sendMessage({
+    target: 'offscreen',
+    type: 'REVOKE_AUDIO_URL',
+    blobUrl
+  }).catch(() => {});
+}
+
+function waitForDownloadCompletion(downloadId) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      finish(new Error('Timed out waiting for WAV download to complete'));
+    }, 2 * 60 * 1000);
+
+    function finish(error = null) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      chrome.downloads.onChanged.removeListener(handleChanged);
+      if (error) reject(error);
+      else resolve();
+    }
+
+    function handleChanged(delta) {
+      if (delta.id !== downloadId || !delta.state?.current) return;
+      if (delta.state.current === 'complete') {
+        finish();
+      } else if (delta.state.current === 'interrupted') {
+        finish(new Error(delta.error?.current || 'WAV download was interrupted'));
+      }
+    }
+
+    chrome.downloads.onChanged.addListener(handleChanged);
+    chrome.downloads.search({ id: downloadId }).then(([item]) => {
+      if (item?.state === 'complete') finish();
+      else if (item?.state === 'interrupted') {
+        finish(new Error(item.error || 'WAV download was interrupted'));
+      }
+    }).catch((error) => finish(error));
+  });
 }
 
 /**
  * Saves cut audio chunk to disk via chrome.downloads API with AI Naming
  */
 async function saveCutTrack(cutResult, trackMetadata) {
-  if (!cutResult || !cutResult.dataUrl || cutResult.durationSec < 2.0) {
+  if (!cutResult?.blobUrl) {
+    return null;
+  }
+  if (cutResult.durationSec < 2.0) {
+    await revokeOffscreenAudioUrl(cutResult.blobUrl);
     return null;
   }
 
@@ -420,15 +546,23 @@ async function saveCutTrack(cutResult, trackMetadata) {
   }
 
   const fileName = resolveUniqueFilename(titleToUse);
-  const folder = sanitizeFilename(state.folderName || 'Web_Recordings');
+  const folder = sanitizePathSegment(state.folderName, {
+    fallback: 'Web_Recordings'
+  });
   const targetPath = `${folder}/${fileName}`;
 
-  const downloadId = await chrome.downloads.download({
-    url: cutResult.dataUrl,
-    filename: targetPath,
-    saveAs: false,
-    conflictAction: 'uniquify'
-  });
+  let downloadId;
+  try {
+    downloadId = await chrome.downloads.download({
+      url: cutResult.blobUrl,
+      filename: targetPath,
+      saveAs: false,
+      conflictAction: 'uniquify'
+    });
+    await waitForDownloadCompletion(downloadId);
+  } finally {
+    await revokeOffscreenAudioUrl(cutResult.blobUrl);
+  }
 
   const recordItem = {
     id: Date.now().toString(),
@@ -559,15 +693,17 @@ async function stopRecording() {
         type: 'STOP_CAPTURE'
       });
 
-      if (stopRes && stopRes.finalTrack && stopRes.finalTrack.dataUrl && stopRes.finalTrack.durationSec >= 2.0) {
+      if (stopRes?.finalTrack?.blobUrl && stopRes.finalTrack.durationSec >= 2.0) {
         await saveCutTrack(stopRes.finalTrack, finishedTrackMeta);
       }
 
-      await Promise.allSettled(Array.from(pendingSaves));
-      await closeOffscreenDocument();
     } catch (error) {
       console.warn('Error during stop capture cleanup:', error);
     } finally {
+      await Promise.allSettled(Array.from(pendingSaves));
+      await closeOffscreenDocument().catch((error) => {
+        console.warn('Error closing offscreen document:', error);
+      });
       if (state.recordingTabId !== null) {
         await chrome.tabs.sendMessage(
           state.recordingTabId,
@@ -576,6 +712,7 @@ async function stopRecording() {
       }
       state.isRecording = false;
       state.recordingTabId = null;
+      state.recordingTabOrigin = '';
       state.recordingTabTitle = '';
       state.currentTrack = null;
       state.trackStartedAt = null;
@@ -592,11 +729,44 @@ async function stopRecording() {
   }
 }
 
+function isPopupSender(sender) {
+  return isTrustedExtensionPageSender(
+    sender,
+    chrome.runtime.id,
+    chrome.runtime.getURL(POPUP_PATH)
+  );
+}
+
 function isOffscreenSender(sender) {
-  return sender?.url === chrome.runtime.getURL(OFFSCREEN_PATH);
+  return isTrustedExtensionPageSender(
+    sender,
+    chrome.runtime.id,
+    chrome.runtime.getURL(OFFSCREEN_PATH)
+  );
+}
+
+function isRecordingTabSender(sender) {
+  return sender?.id === chrome.runtime.id
+    && sender?.tab?.id === state.recordingTabId;
 }
 
 async function handleRuntimeMessage(message, sender) {
+  const popupMessageTypes = new Set([
+    'GET_STATUS',
+    'GET_AUDIO_STATE',
+    'START_RECORDING',
+    'STOP_RECORDING',
+    'CUT_TRACK_NOW',
+    'UPDATE_CONFIG',
+    'TEST_AI_NAMER',
+    'FETCH_AI_MODELS',
+    'PULL_OLLAMA_MODEL',
+    'CLEAR_HISTORY'
+  ]);
+  if (popupMessageTypes.has(message.type) && !isPopupSender(sender)) {
+    throw new Error('Unauthorized message sender');
+  }
+
   switch (message.type) {
     case 'GET_STATUS':
       return {
@@ -617,17 +787,26 @@ async function handleRuntimeMessage(message, sender) {
         recordedTracks: state.recordedTracks
       };
 
+    case 'GET_AUDIO_STATE':
+      return chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'GET_AUDIO_STATE'
+      });
+
     case 'START_RECORDING':
+      if (!Number.isInteger(message.tabId) || message.tabId < 0) {
+        throw new Error('Invalid recording tab');
+      }
       return startRecording(message.tabId);
 
     case 'STOP_RECORDING':
       return stopRecording();
 
     case 'CUT_TRACK_NOW':
-      return cutCurrentTrack(message.newTrack || null, 'manual');
+      return cutCurrentTrack(null, 'manual');
 
     case 'TRACK_CHANGED_IN_TAB':
-      if (state.isRecording && sender.tab && sender.tab.id === state.recordingTabId) {
+      if (state.isRecording && isRecordingTabSender(sender)) {
         if (
           message.isInitial ||
           !state.currentTrack ||
@@ -654,7 +833,7 @@ async function handleRuntimeMessage(message, sender) {
       return { success: true, accepted: true, changed: false };
 
     case 'MEDIA_ENDED_IN_TAB':
-      if (state.isRecording && sender.tab && sender.tab.id === state.recordingTabId) {
+      if (state.isRecording && isRecordingTabSender(sender)) {
         const elapsedSec = (Date.now() - (state.trackStartedAt || Date.now())) / 1000;
         if (elapsedSec >= 2 && state.autoCutOnTrackChange) {
           return cutCurrentTrack(null, 'media-ended');
@@ -681,17 +860,36 @@ async function handleRuntimeMessage(message, sender) {
       return { success: true, accepted: true, changed: false };
 
     case 'UPDATE_CONFIG':
-      if (message.folderName !== undefined) state.folderName = message.folderName;
-      if (message.autoCutOnTrackChange !== undefined) state.autoCutOnTrackChange = message.autoCutOnTrackChange;
-      if (message.autoCutOnSilence !== undefined) state.autoCutOnSilence = message.autoCutOnSilence;
-      if (message.autoStopOnSilence !== undefined) state.autoStopOnSilence = message.autoStopOnSilence;
-      if (message.silenceThreshold !== undefined) state.silenceThreshold = message.silenceThreshold;
-      if (message.aiNamingEnabled !== undefined) state.aiNamingEnabled = message.aiNamingEnabled;
-      if (message.aiProvider !== undefined) state.aiProvider = message.aiProvider;
+      if (message.folderName !== undefined) {
+        state.folderName = sanitizePathSegment(message.folderName, {
+          fallback: 'Web_Recordings'
+        });
+      }
+      for (const field of [
+        'autoCutOnTrackChange',
+        'autoCutOnSilence',
+        'autoStopOnSilence',
+        'aiNamingEnabled'
+      ]) {
+        if (message[field] !== undefined) {
+          if (typeof message[field] !== 'boolean') {
+            throw new Error(`${field} must be a boolean`);
+          }
+          state[field] = message[field];
+        }
+      }
+      if (message.silenceThreshold !== undefined) {
+        state.silenceThreshold = normalizeSilenceThreshold(message.silenceThreshold);
+      }
+      if (message.aiProvider !== undefined) {
+        state.aiProvider = normalizeAiProvider(message.aiProvider);
+      }
       if (message.aiEndpoint !== undefined) {
         state.aiEndpoint = normalizeLocalAiEndpoint(message.aiEndpoint);
       }
-      if (message.aiModel !== undefined) state.aiModel = message.aiModel;
+      if (message.aiModel !== undefined) {
+        state.aiModel = normalizeModelName(message.aiModel);
+      }
       await syncStorage();
 
       if (state.isRecording) {
@@ -709,31 +907,44 @@ async function handleRuntimeMessage(message, sender) {
     case 'TEST_AI_NAMER':
       return {
         success: true,
-        title: await AINamer.generateTitle(message.prompt, {
+        title: await AINamer.generateTitle(normalizePrompt(message.prompt), {
           enabled: true,
-          provider: message.provider || state.aiProvider,
+          provider: message.provider
+            ? normalizeAiProvider(message.provider)
+            : state.aiProvider,
           endpoint: state.aiEndpoint,
-          model: message.model || state.aiModel
+          model: message.model
+            ? normalizeModelName(message.model)
+            : state.aiModel
         })
       };
 
-    case 'FETCH_AI_MODELS':
+    case 'FETCH_AI_MODELS': {
+      const models = await AINamer.fetchOllamaModels(state.aiEndpoint);
       return {
         success: true,
-        models: await AINamer.fetchOllamaModels(state.aiEndpoint)
+        models: models.flatMap((model) => {
+          try {
+            return [normalizeModelName(model)];
+          } catch (_error) {
+            return [];
+          }
+        })
       };
+    }
 
     case 'PULL_OLLAMA_MODEL': {
-      await AINamer.pullOllamaModel(message.model, state.aiEndpoint, (progress) => {
+      const model = normalizeModelName(message.model);
+      await AINamer.pullOllamaModel(model, state.aiEndpoint, (progress) => {
         chrome.runtime.sendMessage({
           type: 'PULL_PROGRESS',
-          model: message.model,
+          model,
           progress: progress
         }).catch(() => {});
       });
-      state.aiModel = message.model;
+      state.aiModel = model;
       await syncStorage();
-      return { success: true, model: message.model };
+      return { success: true, model };
     }
 
     case 'CLEAR_HISTORY':
@@ -750,6 +961,7 @@ async function handleRuntimeMessage(message, sender) {
 // Gate every stateful event on storage restoration after a service worker wake.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === 'offscreen') return false;
+  if (message.type === 'TRACK_SAVED' || message.type === 'PULL_PROGRESS') return false;
 
   ensureInitialized()
     .then(() => handleRuntimeMessage(message, sender))
@@ -763,6 +975,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   ensureInitialized().then(() => {
     if (state.isRecording && state.recordingTabId === tabId) {
+      return stopRecording();
+    }
+    return null;
+  }).catch(() => {});
+});
+
+// Stop before a recording can continue onto a different website origin.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+
+  ensureInitialized().then(() => {
+    if (!state.isRecording || state.recordingTabId !== tabId) return null;
+    const nextOrigin = getUrlOrigin(changeInfo.url);
+    if (state.recordingTabOrigin && nextOrigin !== state.recordingTabOrigin) {
       return stopRecording();
     }
     return null;

@@ -80,54 +80,98 @@ document.addEventListener('DOMContentLoaded', async () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
+  function createSvgIcon(pathData, { width = 14, height = 14, strokeWidth = '2' } = {}) {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(namespace, 'svg');
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', strokeWidth);
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+
+    const path = document.createElementNS(namespace, 'path');
+    path.setAttribute('d', pathData);
+    svg.append(path);
+    return svg;
+  }
+
+  function isBackgroundSender(sender) {
+    const backgroundUrl = chrome.runtime.getURL('background.js');
+    return sender?.id === chrome.runtime.id
+      && !sender.tab
+      && (!sender.url || sender.url === backgroundUrl);
+  }
+
   // Render Recorded Tracks History
   function renderHistory(tracks) {
-    historyCount.textContent = tracks.length;
+    const safeTracks = Array.isArray(tracks) ? tracks : [];
+    historyCount.textContent = safeTracks.length;
+    historyList.replaceChildren();
 
-    if (!tracks || tracks.length === 0) {
-      historyList.innerHTML = `
-        <div class="empty-state">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-          </svg>
-          <p>No tracks recorded yet</p>
-          <span>Play a playlist and start recording</span>
-        </div>
-      `;
+    if (safeTracks.length === 0) {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      emptyState.append(createSvgIcon(
+        'M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+        { width: 22, height: 22, strokeWidth: '1.5' }
+      ));
+
+      const title = document.createElement('p');
+      title.textContent = 'No tracks recorded yet';
+      const hint = document.createElement('span');
+      hint.textContent = 'Play a playlist and start recording';
+      emptyState.append(title, hint);
+      historyList.append(emptyState);
       return;
     }
 
-    historyList.innerHTML = tracks.map((t) => `
-      <div class="track-item" data-download-id="${t.downloadId}">
-        <div class="track-item-left">
-          <div class="track-item-icon">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-          </div>
-          <div class="track-item-details">
-            <div class="track-item-name" title="${t.filename}">${t.filename}</div>
-            <div class="track-item-meta">${formatTime(t.durationSec)} • ${formatBytes(t.sizeBytes)} • 📁 ${t.folder}</div>
-          </div>
-        </div>
-        <div class="track-item-right">
-          <button class="track-item-action show-file-btn" data-id="${t.downloadId}" title="Reveal in Downloads folder">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `).join('');
+    for (const track of safeTracks) {
+      const item = document.createElement('div');
+      item.className = 'track-item';
+      item.dataset.downloadId = String(track.downloadId || '');
 
-    document.querySelectorAll('.show-file-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const downloadId = parseInt(btn.getAttribute('data-id'), 10);
+      const left = document.createElement('div');
+      left.className = 'track-item-left';
+      const icon = document.createElement('div');
+      icon.className = 'track-item-icon';
+      icon.append(createSvgIcon('M5 3l14 9-14 9V3z', {
+        width: 12,
+        height: 12,
+        strokeWidth: '2.5'
+      }));
+
+      const details = document.createElement('div');
+      details.className = 'track-item-details';
+      const name = document.createElement('div');
+      name.className = 'track-item-name';
+      name.title = String(track.filename || '');
+      name.textContent = String(track.filename || 'Untitled Track.wav');
+      const metadata = document.createElement('div');
+      metadata.className = 'track-item-meta';
+      metadata.textContent = `${formatTime(track.durationSec)} • ${formatBytes(track.sizeBytes)} • 📁 ${String(track.folder || '')}`;
+      details.append(name, metadata);
+      left.append(icon, details);
+
+      const right = document.createElement('div');
+      right.className = 'track-item-right';
+      const button = document.createElement('button');
+      button.className = 'track-item-action show-file-btn';
+      button.dataset.id = String(track.downloadId || '');
+      button.title = 'Reveal in Downloads folder';
+      button.append(createSvgIcon('M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'));
+      button.addEventListener('click', () => {
+        const downloadId = Number.parseInt(button.dataset.id, 10);
         if (downloadId && chrome.downloads) {
           chrome.downloads.show(downloadId);
         }
       });
-    });
+      right.append(button);
+      item.append(left, right);
+      historyList.append(item);
+    }
   }
 
   // Populate models dropdown from local Ollama
@@ -136,11 +180,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const res = await chrome.runtime.sendMessage({ type: 'FETCH_AI_MODELS' });
       if (res && res.models && res.models.length > 0) {
         const currentVal = state.aiModel || aiModelSelect.value;
-        const optionsHtml = res.models.map((m) =>
-          `<option value="${m}">${m}${m === 'qwen2.5:1.5b' ? ' (Recommended)' : ''}</option>`
-        ).join('');
-
-        aiModelSelect.innerHTML = optionsHtml + `<option value="__DOWNLOAD_NEW__">📥 ＋ Download New Model...</option>`;
+        const options = res.models.map((model) => new Option(
+          `${model}${model === 'qwen2.5:1.5b' ? ' (Recommended)' : ''}`,
+          model
+        ));
+        options.push(new Option('📥 ＋ Download New Model...', '__DOWNLOAD_NEW__'));
+        aiModelSelect.replaceChildren(...options);
 
         if (res.models.includes(currentVal)) {
           aiModelSelect.value = currentVal;
@@ -149,11 +194,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           state.aiModel = res.models[0];
         }
       } else {
-        aiModelSelect.innerHTML = `
-          <option value="qwen2.5:1.5b">qwen2.5:1.5b (Recommended)</option>
-          <option value="qwen2.5:0.5b">qwen2.5:0.5b</option>
-          <option value="__DOWNLOAD_NEW__">📥 ＋ Download New Model...</option>
-        `;
+        aiModelSelect.replaceChildren(
+          new Option('qwen2.5:1.5b (Recommended)', 'qwen2.5:1.5b'),
+          new Option('qwen2.5:0.5b', 'qwen2.5:0.5b'),
+          new Option('📥 ＋ Download New Model...', '__DOWNLOAD_NEW__')
+        );
       }
     } catch (e) {}
   }
@@ -187,7 +232,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       aiProviderSelect.value = status.aiProvider;
       aiModelRow.style.display = status.aiProvider === 'heuristic' ? 'none' : 'flex';
     }
-    if (status.aiModel && aiModelSelect.querySelector(`option[value="${status.aiModel}"]`)) {
+    if (
+      status.aiModel
+      && Array.from(aiModelSelect.options).some((option) => option.value === status.aiModel)
+    ) {
       aiModelSelect.value = status.aiModel;
     }
 
@@ -372,7 +420,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       try {
         const audioState = await chrome.runtime.sendMessage({
-          target: 'offscreen',
           type: 'GET_AUDIO_STATE'
         });
 
@@ -889,8 +936,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!state.isRecording) return;
 
     cutNowBtn.disabled = true;
-    const origHtml = cutNowBtn.innerHTML;
-    cutNowBtn.innerHTML = '<span>Cutting...</span>';
+    const originalChildren = Array.from(
+      cutNowBtn.childNodes,
+      (node) => node.cloneNode(true)
+    );
+    const cuttingLabel = document.createElement('span');
+    cuttingLabel.textContent = 'Cutting...';
+    cutNowBtn.replaceChildren(cuttingLabel);
 
     try {
       await chrome.runtime.sendMessage({ type: 'CUT_TRACK_NOW' });
@@ -898,7 +950,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.warn('Error during manual cut:', e);
     } finally {
       setTimeout(async () => {
-        cutNowBtn.innerHTML = origHtml;
+        cutNowBtn.replaceChildren(...originalChildren);
         cutNowBtn.disabled = !state.isRecording;
         const freshStatus = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
         updateUI(freshStatus);
@@ -1050,7 +1102,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Listen for streaming pull progress updates from background
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    if (!isBackgroundSender(sender)) return false;
     if (message.type === 'PULL_PROGRESS' && message.progress) {
       pullProgressContainer.style.display = 'flex';
       const pct = message.progress.percent || 0;
@@ -1095,11 +1148,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Listen for real-time background notifications
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    if (!isBackgroundSender(sender)) return false;
     if (message.type === 'TRACK_SAVED') {
       chrome.runtime.sendMessage({ type: 'GET_STATUS' }).then((status) => {
         updateUI(status);
       });
     }
+    return false;
   });
 });

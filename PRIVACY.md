@@ -10,7 +10,8 @@ user opens TrackSnip and starts recording, Chrome's `activeTab` permission gives
 temporary access to that selected tab. TrackSnip then injects its metadata
 detector into that tab. The detector can inspect page titles, media metadata,
 selected player DOM text, and the current page URL to identify the active track.
-Its observers and polling stop when recording ends.
+Its observers and polling stop when recording ends. Recording also stops if the
+selected tab navigates to a different website origin.
 
 Chrome associates a broad permission warning with the `tabCapture` API. That
 browser warning can remain visible even though TrackSnip does not declare
