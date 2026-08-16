@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Removed unreferenced legacy logo source files from the public repository.
+- Tightened public documentation, security reporting, and CI trigger behavior.
+
 ## 1.3.0 - 2026-08-16
 
 - Replaced persistent all-site metadata injection with recording-scoped
@@ -25,7 +30,5 @@
 - Added deterministic regression coverage for naming, transitions, silence,
   downloads, and state behavior.
 
-## Earlier development
-
-Earlier changes are represented in the Git history. This public-release
-scaffolding is the first documented release baseline.
+The public repository begins with the sanitized 1.3.0 release baseline. The
+1.2.1 notes summarize development completed before that public baseline.

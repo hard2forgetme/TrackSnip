@@ -47,5 +47,6 @@ Downloads subfolder.
 
 ## Contact
 
-For privacy questions, open a GitHub issue or use the security contact described
-in `SECURITY.md` once the public repository contact is configured.
+For general privacy questions, open a GitHub issue without including private
+recordings, page content, or personal data. For suspected vulnerabilities, use
+the private reporting process in `SECURITY.md`.

@@ -120,6 +120,10 @@ tooling.
 
 ## Repository layout
 
+The runtime files intentionally sit beside `manifest.json` so the unpacked
+extension remains easy to inspect and load. Tests, release tooling, CI, icons,
+and media are grouped into dedicated directories.
+
 ```text
 TrackSnip/
 ├── assets/                  # Animated wordmark and poster fallback
@@ -130,7 +134,7 @@ TrackSnip/
 ├── offscreen.html/.js       # Tab capture and WAV pipeline
 ├── ai_namer.js              # AI connector and offline naming
 ├── track_metadata_logic.js  # Metadata normalization
-├── track_transition_queue.js# Rapid-transition serialization
+├── track_transition_queue.js # Rapid-transition serialization
 ├── runtime_state_logic.js   # Runtime state reconciliation
 ├── wav_encoder.js           # 16-bit PCM WAV encoder
 └── tests/suite.js           # Deterministic regression suite

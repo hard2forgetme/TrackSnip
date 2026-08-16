@@ -670,7 +670,6 @@ async function handleRuntimeMessage(message, sender) {
 
     case 'AUTO_STOP_SILENCE_TRIGGERED':
       if (state.isRecording && isOffscreenSender(sender) && state.autoStopOnSilence) {
-        console.log('Continuous 5s silence reached. Automatically stopping recording...');
         return stopRecording();
       }
       return { success: true, accepted: true, changed: false };

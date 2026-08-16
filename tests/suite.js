@@ -720,6 +720,62 @@ test('long recordings split at the fixed duration limit', () => {
   assert.ok(backgroundSource.includes("case 'TRACK_DURATION_LIMIT_TRIGGERED':"));
 });
 
+// ==========================================
+// 13. Public Repository Hygiene
+// ==========================================
+console.log('\n--- 13. Public Repository Hygiene ---');
+
+test('current source tree excludes legacy design sources and unfinished release text', () => {
+  const legacyAssets = [
+    '../icons/Auto-Cutter-Logo.png',
+    '../icons/icon.svg',
+    '../icons/logo_tight.png',
+    '../icons/logo_transparent.png',
+  ];
+  for (const relativePath of legacyAssets) {
+    assert.ok(
+      !fs.existsSync(new URL(relativePath, import.meta.url)),
+      `Unused legacy asset must not be present: ${relativePath}`
+    );
+  }
+
+  const changelog = fs.readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+  assert.ok(
+    !changelog.includes('Earlier changes are represented in the Git history.'),
+    'Changelog must describe the sanitized public-history baseline accurately'
+  );
+
+  const privacy = fs.readFileSync(new URL('../PRIVACY.md', import.meta.url), 'utf8');
+  assert.ok(
+    !privacy.includes('once the public repository contact is configured'),
+    'Privacy contact text must not contain a future configuration placeholder'
+  );
+
+  const security = fs.readFileSync(new URL('../SECURITY.md', import.meta.url), 'utf8');
+  assert.ok(
+    !security.includes('when it is enabled')
+      && !security.includes('private contact method configured on the repository'),
+    'Security reporting instructions must describe an available reporting path'
+  );
+
+  const backgroundSource = fs.readFileSync(new URL('../background.js', import.meta.url), 'utf8');
+  assert.ok(
+    !backgroundSource.includes('Continuous 5s silence reached. Automatically stopping recording...'),
+    'Routine auto-stop behavior must not emit debug-style production logs'
+  );
+});
+
+test('CI runs once for main updates instead of repeating on release tag pushes', () => {
+  const workflow = fs.readFileSync(
+    new URL('../.github/workflows/ci.yml', import.meta.url),
+    'utf8'
+  );
+  assert.ok(
+    workflow.includes('push:\n    branches:\n      - main'),
+    'Push checks must be scoped to the main branch'
+  );
+});
+
 // Summary
 console.log('\n========================================');
 console.log(`📊 Test Summary: ${passed} passed, ${failed} failed`);

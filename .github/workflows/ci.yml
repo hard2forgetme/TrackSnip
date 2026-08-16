@@ -2,6 +2,8 @@ name: TrackSnip checks
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:

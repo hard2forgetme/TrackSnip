@@ -9,9 +9,9 @@ Chrome extension.
 ## Reporting a vulnerability
 
 Do not include secrets, private recordings, or personal data in a public issue.
-Use GitHub's private vulnerability reporting feature when it is enabled for the
-repository. Otherwise, contact the repository maintainers through the private
-contact method configured on the repository before public disclosure.
+Use GitHub's private vulnerability reporting feature for this repository. If
+that form is unavailable, open a public issue containing no vulnerability
+details and request a private contact channel before disclosure.
 
 Please include the affected commit or release, reproduction steps, impact, and
 any relevant browser or operating-system details.
