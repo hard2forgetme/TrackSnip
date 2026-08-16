@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrackSnip</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <canvas
+    id="amberRainBackground"
+    class="amber-rain-background"
+    aria-hidden="true"
+  ></canvas>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand" title="Uncompressed 16-bit PCM Audio Capture & Auto-Cutter for Web Playlists" aria-label="TrackSnip">
+        <div class="brand-logo-media" aria-hidden="true">
+          <video
+            class="brand-logo-video"
+            autoplay
+            muted
+            playsinline
+            preload="auto"
+            poster="assets/track-snip-logo-poster.png"
+          >
+            <source src="assets/track-snip-animated-logo.webm" type="video/webm">
+          </video>
+          <img class="brand-logo-static" src="assets/track-snip-logo-poster.png" alt="">
+        </div>
+        <span class="sr-only">TrackSnip</span>
+        <span class="version" id="versionBadge">AI Auto-Cutter</span>
+      </div>
+      <div id="statusBadge" class="status-badge status-idle" title="Live recording status. Turns red when active.">
+        <span class="status-dot"></span>
+        <span id="statusText">IDLE</span>
+      </div>
+    </header>
+
+    <!-- Destination Folder Settings -->
+    <section class="card folder-card">
+      <div class="card-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span>Save Destination Folder</span>
+      </div>
+      <div class="folder-input-group" title="Subfolder inside your browser Downloads folder">
+        <span class="folder-prefix">Downloads /</span>
+        <input type="text" id="folderInput" placeholder="Web_Recordings" spellcheck="false" title="Destination folder name">
+      </div>
+      <div class="folder-hint">
+        <span>Files saved to: <code>Downloads/&lt;Folder&gt;/&lt;Track_Name&gt;.wav</code></span>
+        <div class="duplicate-tag" title="If a song repeats or has the same title, numbers (1, 2, 3...) are appended sequentially.">
+          <span class="badge-dupe">Auto-Duplicates</span> Appends <code> 1</code>, <code> 2</code>, <code> 3</code>...
+        </div>
+      </div>
+    </section>
+
+    <!-- AI Smart Namer Settings Card -->
+    <section class="card ai-card">
+      <div class="card-header ai-header">
+        <div class="ai-title-wrap" title="AI translates prompts (Suno/Udio) and messy web titles into clean, aesthetic song names">
+          <span class="ai-sparkle-sprite">
+            <svg viewBox="0 0 24 24" width="15" height="15">
+              <defs>
+                <linearGradient id="aiSparkleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#e96346"/>
+                  <stop offset="52%" stop-color="#f2b84b"/>
+                  <stop offset="100%" stop-color="#f3ead7"/>
+                </linearGradient>
+              </defs>
+              <path class="star-main" d="M12 2L14.4 9.6L22 12L14.4 14.4L12 22L9.6 14.4L2 12L9.6 9.6L12 2Z" fill="url(#aiSparkleGrad)"/>
+              <path class="star-mini" d="M19 4L19.8 6.2L22 7L19.8 7.8L19 10L18.2 7.8L16 7L18.2 6.2L19 4Z" fill="#f3ead7"/>
+            </svg>
+          </span>
+          <span>AI Track Namer</span>
+        </div>
+        <label class="switch switch-ai" title="Toggle AI Track Naming ON/OFF">
+          <input type="checkbox" id="aiNamingToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+
+      <div id="aiConfigSection" class="ai-config-section">
+        <div class="ai-row">
+          <label class="ai-label" for="aiProviderSelect" title="Choose AI backend: Local Ollama, LM Studio, or Built-in Offline NLP">Engine:</label>
+          <select id="aiProviderSelect" class="ai-select" title="Select AI Naming Provider">
+            <option value="ollama">Ollama (Local LLM)</option>
+            <option value="openai-compatible">LM Studio / LocalAI</option>
+            <option value="heuristic">Built-in Smart Cleaner (Offline NLP)</option>
+          </select>
+        </div>
+
+        <div class="ai-row" id="aiModelRow">
+          <label class="ai-label" for="aiModelSelect" title="Active local LLM model">Model:</label>
+          <div class="ai-model-select-wrapper">
+            <select id="aiModelSelect" class="ai-select" title="Select installed local model or download new one">
+              <option value="qwen2.5:1.5b">qwen2.5:1.5b (Recommended)</option>
+              <option value="qwen2.5:0.5b">qwen2.5:0.5b (Fastest)</option>
+              <option value="llama3.2:1b">llama3.2:1b</option>
+              <option value="qwen3.8:fast">qwen3.8:fast</option>
+              <option value="__DOWNLOAD_NEW__">📥 ＋ Download New Model...</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 1-Click Model Downloader Drawer -->
+        <div id="modelDownloaderDrawer" class="model-downloader-drawer" style="display: none;">
+          <div class="downloader-header">
+            <span>📥 1-Click Model Downloader</span>
+            <button id="closeDownloaderBtn" class="btn-close-sm" title="Close downloader">✕</button>
+          </div>
+          <div class="model-cards-grid">
+            <div class="model-card-item">
+              <div class="model-card-info">
+                <span class="model-card-name">Qwen 2.5 1.5B <span class="badge-rec">Recommended</span></span>
+                <span class="model-card-meta">986 MB • Creative, poetic & fast (~100ms)</span>
+              </div>
+              <button class="btn-pull-model" data-model="qwen2.5:1.5b">Download</button>
+            </div>
+
+            <div class="model-card-item">
+              <div class="model-card-info">
+                <span class="model-card-name">Llama 3.2 1B</span>
+                <span class="model-card-meta">1.3 GB • Meta edge-optimized</span>
+              </div>
+              <button class="btn-pull-model" data-model="llama3.2:1b">Download</button>
+            </div>
+
+            <div class="model-card-item">
+              <div class="model-card-info">
+                <span class="model-card-name">Qwen 2.5 3B</span>
+                <span class="model-card-meta">1.9 GB • Highest quality titles</span>
+              </div>
+              <button class="btn-pull-model" data-model="qwen2.5:3b">Download</button>
+            </div>
+
+            <div class="model-card-item">
+              <div class="model-card-info">
+                <span class="model-card-name">Qwen 2.5 0.5B</span>
+                <span class="model-card-meta">397 MB • Ultra-lightweight</span>
+              </div>
+              <button class="btn-pull-model" data-model="qwen2.5:0.5b">Download</button>
+            </div>
+          </div>
+
+          <!-- Custom Model Pull Input -->
+          <div class="custom-pull-group">
+            <input type="text" id="customModelInput" placeholder="Custom model (e.g. gemma2:2b)">
+            <button id="customPullBtn" class="btn btn-xs btn-secondary">Pull</button>
+          </div>
+
+          <!-- Download Progress Indicator -->
+          <div id="pullProgressContainer" class="pull-progress-container" style="display: none;">
+            <div class="progress-info">
+              <span id="pullStatusText">Downloading...</span>
+              <span id="pullPercentText">0%</span>
+            </div>
+            <div class="progress-bar-track">
+              <div id="pullProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interactive Live Prompt Test -->
+        <div class="ai-tester-drawer">
+          <div class="tester-input-group" title="Type any prompt or raw title to test AI title generation">
+            <input type="text" id="aiTestInput" placeholder="Test prompt (e.g. 80s synthwave about neon lights)">
+            <button id="aiTestBtn" class="btn btn-xs btn-ai" title="Generate title preview">Test Name</button>
+          </div>
+          <div id="aiTestResult" class="ai-test-result" style="display: none;">
+            <span class="result-label">Generated Title:</span>
+            <span id="aiTestResultText" class="result-text">Ready</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Now Playing & Waveform Card -->
+    <section class="card player-card" id="playerCard">
+      <div class="now-playing-header">
+        <div class="now-playing-left">
+          <span class="label-now-playing">CURRENT TRACK</span>
+          <div class="tape-reels" id="tapeReelsWidget" style="display: none;">
+            <span class="tape-hub hub-left"></span>
+            <span class="tape-hub hub-right"></span>
+          </div>
+        </div>
+        <span id="recordingTimer" class="recording-timer" title="Recording time">00:00</span>
+      </div>
+      <div class="track-info">
+        <div class="track-title-wrapper">
+          <h2 id="currentTrackTitle" class="track-title">Ready to Record</h2>
+        </div>
+        <p id="currentTrackArtist" class="track-artist">Select a tab playing music and click Start</p>
+      </div>
+
+      <!-- Real-time Audio Spectrum Visualizer Canvas & Mode Switcher -->
+      <div class="visualizer-header">
+        <span class="visualizer-label">LIVE AUDIO METER</span>
+        <button id="btnCycleVisualizer" class="btn-vis-cycle" title="Click to cycle visualizer mode: 3D Horizon, OLED Bars, Analog VU Meter, or Dual Reactor">
+          <span id="visModeIcon">🌌</span>
+          <span id="visModeName">3D Horizon</span>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+        </button>
+      </div>
+      <div class="visualizer-container" id="visualizerContainer" title="Live audio visualizer (Click to switch style)">
+        <canvas id="visualizerCanvas" width="344" height="68"></canvas>
+      </div>
+    </section>
+
+    <!-- Main Action Controls -->
+    <section class="action-section">
+      <button id="toggleRecordBtn" class="btn btn-primary" title="Start or stop recording audio from active tab. Tab audio remains audible.">
+        <svg class="icon-record" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="12" r="10"></circle>
+        </svg>
+        <span id="recordBtnText">Start Recording Tab</span>
+      </button>
+
+      <button id="cutNowBtn" class="btn btn-secondary" disabled title="Manually cuts current song, generates AI title, saves to disk, and begins next track">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6" cy="6" r="3"></circle>
+          <circle cx="6" cy="18" r="3"></circle>
+          <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
+          <line x1="14.47" y1="14.48" x2="20" y2="20"></line>
+          <line x1="8.12" y1="8.12" x2="12" y2="12"></line>
+        </svg>
+        <span>Cut & Save Track Now</span>
+      </button>
+    </section>
+
+    <!-- Automation Settings -->
+    <section class="card settings-card">
+      <div class="setting-row" title="Automatically cuts and saves track when the web playlist advances to next song">
+        <div class="setting-info">
+          <span class="setting-title">Auto-Cut on Track Change</span>
+          <span class="setting-desc">Cuts track when playlist moves to next song</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoCutToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+
+      <div class="setting-row" title="Automatically cuts and saves track when a pause between songs (>0.8s) occurs">
+        <div class="setting-info">
+          <span class="setting-title">Auto-Cut on Silence & Breaks</span>
+          <span class="setting-desc">Cuts when audio pauses or breaks &gt; 0.8s</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="silenceCutToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+
+      <div class="setting-row" title="Automatically finalizes and stops recording if no audio is heard for ~5 seconds (e.g. playlist reaches end)">
+        <div class="setting-info">
+          <span class="setting-title">Auto-Stop on Inactivity</span>
+          <span class="setting-desc">Stops recording if silent for &gt; 5 seconds</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoStopSilenceToggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Recorded Tracks History -->
+    <section class="card history-card">
+      <div class="history-header">
+        <div class="history-title-group" title="List of tracks saved during this session">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span>Recorded Tracks (<span id="historyCount">0</span>)</span>
+        </div>
+        <button id="clearHistoryBtn" class="btn-text" title="Clear the session track history list">Clear</button>
+      </div>
+
+      <div id="historyList" class="history-list">
+        <div class="empty-state">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+          </svg>
+          <p>No tracks recorded yet</p>
+          <span>Play a playlist and start recording</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="amber_rain_background.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

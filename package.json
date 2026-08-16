@@ -1,0 +1,16 @@
+{
+  "name": "tracksnip",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "TrackSnip Chrome extension release tooling",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node tests/suite.js",
+    "audit:public": "node scripts/audit-public.mjs",
+    "check": "node scripts/validate-release.mjs && node scripts/audit-public.mjs",
+    "package": "node scripts/package-release.mjs"
+  }
+}

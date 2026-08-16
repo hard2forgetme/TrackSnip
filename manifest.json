@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "TrackSnip - AI Music Auto-Cutter",
+  "version": "1.3.0",
+  "description": "Automatically records, names, cuts, and saves web playlist tracks into folders with duplicate handling.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TrackSnip - AI Music Auto-Cutter",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "downloads",
+    "storage",
+    "activeTab",
+    "scripting",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
+}

@@ -1,0 +1,30 @@
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Node / Development
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Logs & Temporary Files
+*.log
+*.tmp
+scratch/
+.system_generated/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+dist/
+release/
+coverage/
